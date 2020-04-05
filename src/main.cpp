@@ -31,10 +31,14 @@
 #include <ESP8266WiFi.h>
 #include <FastLED.h>
 
+#define xstr(s) str(s)
+#define str(s) #s
+
 WiFiClient client;
 
-char *ssid = "EAJ";
-const char *password = "emmaadamjono";
+//Gets SSID/PASSWORD from Platform.ini build flags
+const char ssid[] = xstr(SSID_NAME);          //  your network SSID (name)
+const char password[] = xstr(PASSWORD_NAME);      // your network password
 
 //RNZ (r)
 const char *host = "radionz-ice.streamguys.com";

@@ -56,13 +56,29 @@ const char *path3 = "/stream/bbcwssc_mp1_ws-eieuk";
 int httpPort3 = 80;
 
 //Volume
-int vol = 10;
+int vol = 0;
+
+//Breaks
+const int pot_array_size = 8;
+int pot_array_shim = 5;       //buffer between array values to stop shuttering between positions
+int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 250, 500, 720, 880, 1000, 1024 + pot_array_shim + 1};  //1024 exceeded due to shim value
+int pot_array_count = 0;      //counter to cycle through array
+int new_pot_position = 0;      //For newly found position
+int current_pot_position = 1000;  //currently held position to compare to a newly found position.   Start with 1000 so a new position will be found in the comparision with new position
+long current_pot_position_millis;  //millis for position
+long threshold = 1000;          //How long to be in the position before changing tracks
+long long loop_millis;    //for delays
+long pot_check_millis;    //used for pot check delay
+const int analogInPin = A0;  // ESP8266 Analog Pin ADC0 = A0
+int new_sensorValue = 0;         // value read from the pot
+int pot_check_delay = 0;      //How long between checking pot, if radio is streaming it needs be be high
+int pot_check_delay_radio = 200;
 
 //LED details 
-#define NUM_LEDS_PER_STRIP 9  //Number of LEDs per strip  (count from 0)
+#define NUM_LEDS_PER_STRIP 7  //Number of LEDs per strip  (count from 0)
 #define PIN_LED 5            //I.O pin on ESP2866 device going to LEDs
 #define COLOR_ORDER GRB       // LED stips aren't all in the same RGB order.  If colours are wrong change this  e.g  RBG > GRB.   :RBG=TARDIS
-#define brightness2 255       //for stormy weather display
+#define brightness 32       //How bright are the LEDs
 
 int green = 255;
 int blue = 255;
@@ -128,54 +144,53 @@ Adafruit_VS1053_FilePlayer musicPlayer =
   Adafruit_VS1053_FilePlayer(VS1053_RESET, VS1053_CS, VS1053_DCS, VS1053_DREQ, CARDCS);
 
 void printDirectory(File dir, int numTabs);
-
+void check_pot_position();
+void display_values();
+void play_music();
+void continue_stream();
 
 void setup() {
   Serial.begin(115200);
-
+  
   FastLED.addLeds<WS2811, PIN_LED, COLOR_ORDER>(leds, NUM_LEDS_PER_STRIP); //Initialise the LEDs
 
 
-  // if you're using Bluefruit or LoRa/RFM Feather, disable the radio module
-  //pinMode(8, INPUT_PULLUP);
-
-  // Wait for serial port to be opened, remove this line for 'standalone' operation
+   // Wait for serial port to be opened, remove this line for 'standalone' operation
   while (!Serial) { delay(1); }
   delay(500);
+
+  //VS1053 init
   Serial.println("\n\nAdafruit VS1053 Feather Test");
   
   if (! musicPlayer.begin()) { // initialise the music player
      Serial.println(F("Couldn't find VS1053, do you have the right pins defined?"));
      while (1);
   }
-
   Serial.println(F("VS1053 found"));
- 
+  musicPlayer.setVolume(vol, vol);   // Set volume for left, right channels. lower numbers == louder volume!
   musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
   
+  #if defined(__AVR_ATmega32U4__) 
+    // Timer interrupts are not suggested, better to use DREQ interrupt!
+    // but we don't have them on the 32u4 feather...
+    musicPlayer.useInterrupt(VS1053_FILEPLAYER_TIMER0_INT); // timer int
+  #else
+    // If DREQ is on an interrupt pin we can do background
+    // audio playing
+    musicPlayer.useInterrupt(VS1053_FILEPLAYER_PIN_INT);  // DREQ int
+  #endif
+
+
+  //SD Card init
   if (!SD.begin(CARDCS)) {
     Serial.println(F("SD failed, or not present"));
     while (1);  // don't do anything more
   }
   Serial.println("SD OK!");
-  
-  // list files
-  printDirectory(SD.open("/"), 0);
-  
-  // Set volume for left, right channels. lower numbers == louder volume!
-  musicPlayer.setVolume(vol, vol);
-  
-#if defined(__AVR_ATmega32U4__) 
-  // Timer interrupts are not suggested, better to use DREQ interrupt!
-  // but we don't have them on the 32u4 feather...
-  musicPlayer.useInterrupt(VS1053_FILEPLAYER_TIMER0_INT); // timer int
-#else
-  // If DREQ is on an interrupt pin we can do background
-  // audio playing
-  musicPlayer.useInterrupt(VS1053_FILEPLAYER_PIN_INT);  // DREQ int
-#endif
+  printDirectory(SD.open("/"), 0);   // list files on SD
 
-  //Wifi
+
+  //Wifi init
   Serial.print("Connecting to SSID "); Serial.println(ssid);
   WiFi.begin(ssid, password);
   
@@ -186,8 +201,10 @@ void setup() {
  
   Serial.println("WiFi connected");  
   Serial.println("IP address: ");  Serial.println(WiFi.localIP());
-  
-  FastLED.setBrightness(255);
+
+
+  //LED init 
+  FastLED.setBrightness(brightness);
   
   fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
     FastLED.show();
@@ -203,40 +220,57 @@ void setup() {
     fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
     FastLED.show();
     delay (1000);
+
+  //Set initial position millis count
+  current_pot_position_millis = millis();
+  pot_check_millis = millis();
 }
 
+
+
 void loop() {
+//Putting analgue read here causes stream to fail
 
-  yield();
+//Check pot position if radio = 0 (!= 1)  or  the delay is reached
+if (radio !=1 || millis() - pot_check_millis >= pot_check_delay){
 
-  if (Serial.available()) {
-    char c = Serial.read();
+check_pot_position();
+pot_check_millis = millis();
+}
 
-    if (c == '1') {
+//if radio = 1 then I am streaming....keep pulling data
+if (radio == 1) {
+  continue_stream();
+}
+  //display_values();  
+}
 
-      musicPlayer.stopPlaying();          
-      Serial.println(F("Playing track 001"));
-      musicPlayer.startPlayingFile("/track001.mp3");
-    }
 
-    if (c == '2') {
-      musicPlayer.stopPlaying();           
-      Serial.println(F("Playing track 002"));
-      musicPlayer.startPlayingFile("/track002.mp3");
-    }
-
-    // if we get an 's' on the serial console, stop!
-    if (c == 's') {
-            
+//Play music based on pot_position
+void play_music() {
+if (current_pot_position == 0) {
       musicPlayer.stopPlaying();
-      radio = 0;
-      Serial.println("Stop");
-    }
+      
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
 
-    //r=radio
-    if (c == 'r') {
+       Serial.println("Stop");
+       radio = 0;         //1 means play radio in loop
+       pot_check_delay = 0;
+  }
+
+  if (current_pot_position == 1) {
       radio = 1;    //make 1 in case r in pressed
+      pot_check_delay = pot_check_delay_radio;
       musicPlayer.stopPlaying();      
+      
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
+
       Serial.println("Radio 1 on");
 
         /************************* INITIALIZE STREAM */
@@ -255,12 +289,26 @@ void loop() {
         client.print(String("GET ") + path + " HTTP/1.1\r\n" +
                     "Host: " + host + "\r\n" + 
                     "Connection: close\r\n\r\n");
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
+
       }
 
-    //r=radio
-    if (c == 'w') {
+
+  if (current_pot_position == 2) {
+
       musicPlayer.stopPlaying();
       radio = 1;    //make 1 in case r in pressed
+      pot_check_delay = pot_check_delay_radio;
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
+
       Serial.println("Radio 2 on");
 
         /************************* INITIALIZE STREAM */
@@ -279,12 +327,24 @@ void loop() {
         client.print(String("GET ") + path2 + " HTTP/1.1\r\n" +
                     "Host: " + host2 + "\r\n" + 
                     "Connection: close\r\n\r\n");
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 1000){
+        yield();
+        }
       }
 
-    //r=radio
-    if (c == 'b') {
+  if (current_pot_position == 3) {
+
       radio = 1;    //make 1 in case r in pressed
+      pot_check_delay = pot_check_delay_radio;
       musicPlayer.stopPlaying();
+      
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
+
       Serial.println("Radio 3 on");
 
         /************************* INITIALIZE STREAM */
@@ -303,60 +363,64 @@ void loop() {
         client.print(String("GET ") + path3 + " HTTP/1.1\r\n" +
                     "Host: " + host3 + "\r\n" + 
                     "Connection: close\r\n\r\n");
-      }
 
-    // if we get an 'p' on the serial console, pause/unpause!
-    if (c == 'p') {
-      
-      if (! musicPlayer.paused()) {
-        Serial.println("Paused");        
-        musicPlayer.pausePlaying(true);
-      } else { 
-        Serial.println("Resumed");
-        musicPlayer.pausePlaying(false);
-      }
-    }
-  }
-
-if (radio == 1) {
-      yield();
-      // wait till mp3 wants more data
-      if (musicPlayer.readyForData()) {
-        //Serial.print("ready ");
-
-        //wants more data! check we have something available from the stream
-        if (client.available() > 0) {
+        loop_millis = millis();
+        while (millis() - loop_millis < 1000){
           yield();
-          //Serial.print("set ");
-          // yea! read up to 32 bytes
-          uint8_t bytesread = client.read(mp3buff, 32);
-          // push to mp3
-          musicPlayer.playData(mp3buff, bytesread);
-    
-          //Serial.println("stream!");
-        }
+          }
       }
+
+  if (current_pot_position == 4) {
+      radio = 0;         //1 means play radio in loop
+      pot_check_delay = 0;
+      musicPlayer.stopPlaying();          
+
+      Serial.println(F("Playing track 1"));
+      musicPlayer.startPlayingFile("/1.mp3");
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 1000){
+        yield();
+        }
+    }
+
+  if (current_pot_position == 5) {
+      radio = 0;         //1 means play radio in loop
+      pot_check_delay = 0;
+      musicPlayer.stopPlaying();          
+      
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
         }
 
+      Serial.println(F("Playing track 2"));
+      musicPlayer.startPlayingFile("/2.mp3");
+      
+      loop_millis = millis();
+      while (millis() - loop_millis < 1000){
+        yield();
+        }
+    }
 
-if (radio == 0) {
-  yield();
-  //LEDs
-  fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-  fill_solid(&(leds[LED_count]), 1 /*number of leds*/, CRGB(red, green, blue));
-  FastLED.setBrightness(255);
-  FastLED.show();
+  if (current_pot_position == 6) {
+      radio = 0;         //1 means play radio in loop
+      pot_check_delay = 0;
+      musicPlayer.stopPlaying(); 
 
-  LED_count++;
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
 
-  if (LED_count > NUM_LEDS_PER_STRIP){
-    yield();
-    LED_count = 0;
-  }
+      Serial.println(F("Playing track 3"));
+      musicPlayer.startPlayingFile("/3.mp3");
 
-  delay(100);
-}
-
+      loop_millis = millis();
+      while (millis() - loop_millis < 1000){
+        yield();
+        }
+    }  
 }
 
 
@@ -384,4 +448,111 @@ void printDirectory(File dir, int numTabs) {
      }
      entry.close();
    }
+}
+
+void display_values(){
+    //print the readings in the Serial Monitor
+    Serial.print("sensor = ");
+    Serial.print(new_sensorValue);
+    Serial.print(",    pot_found = ");
+    Serial.println(new_pot_position);
+
+    Serial.print("radio = ");
+    Serial.print(radio);
+    Serial.print(",   current pot millis = ");
+    Serial.print(current_pot_position_millis);
+    Serial.print(",   current pot pos = ");
+    Serial.print(current_pot_position);
+    Serial.print(",   pot pos = ");
+    Serial.println(current_pot_position);
+}
+
+void continue_stream(){
+          //Serial.print(".");  
+        //yield();
+        // wait till mp3 wants more data
+        if (musicPlayer.readyForData()) {
+          //Serial.print("ready ");
+
+          //wants more data! check we have something available from the stream
+          if (client.available() > 0) {
+            //yield();
+            //Serial.print("set ");
+            // yea! read up to 32 bytes
+            uint8_t bytesread = client.read(mp3buff, 32);
+            // push to mp3
+            musicPlayer.playData(mp3buff, bytesread);
+      
+            //Serial.println("stream!");
+          }
+        }
+}
+
+void check_pot_position(){
+
+  //old_sensorValue = new_sensorValue;
+  new_sensorValue = analogRead(analogInPin);
+
+  //Figure out position based on Pot_array[]
+  pot_array_count = 0;   //counter to cycle through array
+  new_pot_position = -1;   //-1 means nothing found by default (e.g not a valid position)
+
+  while (new_pot_position == -1){
+
+    if (new_sensorValue >= (pot_array[pot_array_count] + pot_array_shim) && new_sensorValue < (pot_array[pot_array_count + 1] - pot_array_shim)){
+      new_pot_position = pot_array_count;
+      break;
+    }
+
+    pot_array_count++;
+
+    //No position found, probably in between positions due to shim value.  In this case keep current position
+    if (pot_array_count > pot_array_size -1){
+        new_pot_position = current_pot_position;    //if true, keep current position
+        break;
+    }
+  }
+
+
+  //new position, start millis count and set current position unless in -1 error state
+  if (new_pot_position != current_pot_position && new_pot_position != -1){
+      
+      current_pot_position = new_pot_position;
+      current_pot_position_millis = millis();  
+      pot_check_delay = 0;
+      radio = 0;   //It's moved, stop streaming
+
+      }
+    
+  //New position, check how long it's been in this new position
+  //If current_pot_postion_millis > 0 then we assume a new position has been reached 
+  if (current_pot_position_millis != 0){
+
+    //LEDs
+    fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+    fill_solid(&(leds[current_pot_position]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+    if (millis() - current_pot_position_millis > threshold) {
+        
+        //We have gone over theshold, do the mp3 and stop this main 'if' from passing
+        //current_pot_postion_millis only greater than 0 when new position found
+        current_pot_position_millis = 0;
+        Serial.println();
+        Serial.print("Threshold reach = ");
+        Serial.print(millis());
+
+        //LEDs
+        fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+        fill_solid(&(leds[current_pot_position]), 1 /*number of leds*/, CRGB(red, green, blue));
+          FastLED.show();
+
+        Serial.print("*** current_pot_position ***  = ");
+        Serial.println(current_pot_position);
+        Serial.println(F("...pip..."));
+
+        play_music();
+
+      }  
+  }  
 }

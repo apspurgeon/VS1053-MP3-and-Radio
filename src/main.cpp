@@ -30,10 +30,13 @@
 #include <Adafruit_VS1053.h>
 #include <ESP8266WiFi.h>
 #include <FastLED.h>
-
+#include <BlynkSimpleEsp8266.h>
 #define xstr(s) str(s)
 #define str(s) #s
+#define BLYNK_PRINT Serial
+#define DBLYNKCERT_NAME "H3reyRYu6lEjFVRLbgwMF9JwLVMd8Lff"
 
+const char auth[] = xstr(BLYNKCERT_NAME); // your BLYNK Cert from build flags
 WiFiClient client;
 
 //Gets SSID/PASSWORD from Platform.ini build flags
@@ -56,12 +59,14 @@ const char *path3 = "/stream/bbcwssc_mp1_ws-eieuk";
 int httpPort3 = 80;
 
 //Volume
-int vol = 0;
+int vol = 15;
+int blynk_vol = 15;
 
 //Breaks
-const int pot_array_size = 8;
+const int pot_array_size = 10;
 int pot_array_shim = 5;       //buffer between array values to stop shuttering between positions
-int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 250, 500, 720, 880, 1000, 1024 + pot_array_shim + 1};  //1024 exceeded due to shim value
+//int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 250, 500, 720, 880, 1000, 1024 + pot_array_shim + 1};  //1024 exceeded due to shim value
+int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 175, 300, 520, 680, 800, 900, 1000, 1024 + pot_array_shim + 1};  //1024 exceeded due to shim value
 int pot_array_count = 0;      //counter to cycle through array
 int new_pot_position = 0;      //For newly found position
 int current_pot_position = 1000;  //currently held position to compare to a newly found position.   Start with 1000 so a new position will be found in the comparision with new position
@@ -72,10 +77,12 @@ long pot_check_millis;    //used for pot check delay
 const int analogInPin = A0;  // ESP8266 Analog Pin ADC0 = A0
 int new_sensorValue = 0;         // value read from the pot
 int pot_check_delay = 0;      //How long between checking pot, if radio is streaming it needs be be high
-int pot_check_delay_radio = 200;
+int pot_check_delay_radio = 800;
+int pause = 0;
+int blynk_pause = 0;
 
 //LED details 
-#define NUM_LEDS_PER_STRIP 7  //Number of LEDs per strip  (count from 0)
+#define NUM_LEDS_PER_STRIP 9  //Number of LEDs per strip  (count from 0)
 #define PIN_LED 5            //I.O pin on ESP2866 device going to LEDs
 #define COLOR_ORDER GRB       // LED stips aren't all in the same RGB order.  If colours are wrong change this  e.g  RBG > GRB.   :RBG=TARDIS
 #define brightness 32       //How bright are the LEDs
@@ -149,15 +156,28 @@ void display_values();
 void play_music();
 void continue_stream();
 
+BLYNK_WRITE(V0) // Widget WRITEs to Virtual Pin
+{
+  blynk_vol = param.asInt(); // getting first value
+}
+
+BLYNK_WRITE(V1) // Widget WRITEs to Virtual Pin
+{
+  blynk_pause = param.asInt(); // getting first value
+}
+
+
 void setup() {
   Serial.begin(115200);
   
   FastLED.addLeds<WS2811, PIN_LED, COLOR_ORDER>(leds, NUM_LEDS_PER_STRIP); //Initialise the LEDs
 
-
    // Wait for serial port to be opened, remove this line for 'standalone' operation
   while (!Serial) { delay(1); }
   delay(500);
+
+  Blynk.config(auth);
+  Blynk.connect();
 
   //VS1053 init
   Serial.println("\n\nAdafruit VS1053 Feather Test");
@@ -167,8 +187,9 @@ void setup() {
      while (1);
   }
   Serial.println(F("VS1053 found"));
-  musicPlayer.setVolume(vol, vol);   // Set volume for left, right channels. lower numbers == louder volume!
-  musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
+  
+  musicPlayer.setVolume(50 - vol, 50 -vol);   // Set volume for left, right channels. lower numbers == louder volume!
+  //musicPlayer.sineTest(0x44, 500);    // Make a tone to indicate VS1053 is working
   
   #if defined(__AVR_ATmega32U4__) 
     // Timer interrupts are not suggested, better to use DREQ interrupt!
@@ -231,15 +252,35 @@ void setup() {
 void loop() {
 //Putting analgue read here causes stream to fail
 
+if (blynk_vol != vol){
+  vol = blynk_vol;
+  musicPlayer.setVolume(50 - vol, 50 - vol);   // Set volume for left, right channels. lower numbers == louder volume!
+  //Serial.println(vol);
+  //Serial.println(blynk_vol);
+  }
+
+ if (pause != blynk_pause) {
+
+      if (! musicPlayer.paused()) {
+        musicPlayer.pausePlaying(true);
+      } else { 
+        musicPlayer.pausePlaying(false);
+      }
+
+  pause = blynk_pause;
+  }
+
+
 //Check pot position if radio = 0 (!= 1)  or  the delay is reached
 if (radio !=1 || millis() - pot_check_millis >= pot_check_delay){
 
 check_pot_position();
 pot_check_millis = millis();
+Blynk.run(); 
 }
 
 //if radio = 1 then I am streaming....keep pulling data
-if (radio == 1) {
+if (radio == 1 && pause ==0) {
   continue_stream();
 }
   //display_values();  
@@ -421,6 +462,45 @@ if (current_pot_position == 0) {
         yield();
         }
     }  
+
+  if (current_pot_position == 7) {
+      radio = 0;         //1 means play radio in loop
+      pot_check_delay = 0;
+      musicPlayer.stopPlaying(); 
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
+
+      Serial.println(F("Playing track 4"));
+      musicPlayer.startPlayingFile("/4.mp3");
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 1000){
+        yield();
+        }
+    }  
+
+  if (current_pot_position == 8) {
+      radio = 0;         //1 means play radio in loop
+      pot_check_delay = 0;
+      musicPlayer.stopPlaying(); 
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
+
+      Serial.println(F("Playing track 5"));
+      musicPlayer.startPlayingFile("/5.mp3");
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 1000){
+        yield();
+        }
+    }  
+
 }
 
 
@@ -549,10 +629,11 @@ void check_pot_position(){
 
         Serial.print("*** current_pot_position ***  = ");
         Serial.println(current_pot_position);
-        Serial.println(F("...pip..."));
 
         play_music();
 
       }  
   }  
 }
+
+

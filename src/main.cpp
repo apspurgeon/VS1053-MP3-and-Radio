@@ -59,8 +59,8 @@ const char *path3 = "/stream/bbcwssc_mp1_ws-eieuk";
 int httpPort3 = 80;
 
 //Volume
-int vol = 15;
-int blynk_vol = 15;
+int vol = 0;
+int blynk_vol = vol;
 
 //Breaks
 const int pot_array_size = 10;
@@ -70,16 +70,20 @@ int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 175, 300, 520, 680,
 int pot_array_count = 0;      //counter to cycle through array
 int new_pot_position = 0;      //For newly found position
 int current_pot_position = 1000;  //currently held position to compare to a newly found position.   Start with 1000 so a new position will be found in the comparision with new position
-long current_pot_position_millis;  //millis for position
-long threshold = 1000;          //How long to be in the position before changing tracks
-long long loop_millis;    //for delays
+unsigned long  current_pot_position_millis;  //millis for position
+unsigned long  threshold = 1000;          //How long to be in the position before changing tracks
+unsigned long  loop_millis;    //for delays
 long pot_check_millis;    //used for pot check delay
 const int analogInPin = A0;  // ESP8266 Analog Pin ADC0 = A0
 int new_sensorValue = 0;         // value read from the pot
-int pot_check_delay = 0;      //How long between checking pot, if radio is streaming it needs be be high
-int pot_check_delay_radio = 800;
+unsigned long  pot_check_delay;
+unsigned long  pot_check_delay_loop = 50;      //Blynk fails if 0, How long between checking pot, if radio is streaming it needs be be high otherwise faster in a loop
+unsigned long  pot_check_delay_radio = 800;      //How long between checking pot, if radio is streaming it needs be be high
 int pause = 0;
 int blynk_pause = 0;
+int blynk_menu = 0;
+int menu = 0;
+int trigger = 0;    //Used to trigger playing of stream/mp3s with Blynk.  -1 = No trigger from Blynk
 
 //LED details 
 #define NUM_LEDS_PER_STRIP 9  //Number of LEDs per strip  (count from 0)
@@ -155,6 +159,7 @@ void check_pot_position();
 void display_values();
 void play_music();
 void continue_stream();
+void Blynk_check();
 
 BLYNK_WRITE(V0) // Widget WRITEs to Virtual Pin
 {
@@ -164,6 +169,11 @@ BLYNK_WRITE(V0) // Widget WRITEs to Virtual Pin
 BLYNK_WRITE(V1) // Widget WRITEs to Virtual Pin
 {
   blynk_pause = param.asInt(); // getting first value
+}
+
+BLYNK_WRITE(V2) // Widget WRITEs to Virtual Pin
+{
+  blynk_menu = param.asInt(); // getting first value  
 }
 
 
@@ -245,6 +255,7 @@ void setup() {
   //Set initial position millis count
   current_pot_position_millis = millis();
   pot_check_millis = millis();
+  pot_check_delay = pot_check_delay_loop;
 }
 
 
@@ -252,35 +263,28 @@ void setup() {
 void loop() {
 //Putting analgue read here causes stream to fail
 
-if (blynk_vol != vol){
-  vol = blynk_vol;
-  musicPlayer.setVolume(50 - vol, 50 - vol);   // Set volume for left, right channels. lower numbers == louder volume!
-  //Serial.println(vol);
-  //Serial.println(blynk_vol);
-  }
+Blynk.run(); 
 
- if (pause != blynk_pause) {
+Blynk_check();
 
-      if (! musicPlayer.paused()) {
-        musicPlayer.pausePlaying(true);
-      } else { 
-        musicPlayer.pausePlaying(false);
-      }
+if (trigger > 0){
 
-  pause = blynk_pause;
-  }
+  Serial.println("Blynk trigger");
+  play_music();
+}
 
 
-//Check pot position if radio = 0 (!= 1)  or  the delay is reached
-if (radio !=1 || millis() - pot_check_millis >= pot_check_delay){
+//Check pot position if radio = 0 (!= 1)  or the delay is reached
+//if (radio !=1 || millis() - pot_check_millis >= pot_check_delay){
+if (millis() - pot_check_millis >= pot_check_delay){
 
+//Serial.println("Pot check");
 check_pot_position();
 pot_check_millis = millis();
-Blynk.run(); 
 }
 
 //if radio = 1 then I am streaming....keep pulling data
-if (radio == 1 && pause ==0) {
+if (radio == 1 && pause == 0) {
   continue_stream();
 }
   //display_values();  
@@ -289,7 +293,7 @@ if (radio == 1 && pause ==0) {
 
 //Play music based on pot_position
 void play_music() {
-if (current_pot_position == 0) {
+if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       musicPlayer.stopPlaying();
       
       loop_millis = millis();
@@ -299,13 +303,20 @@ if (current_pot_position == 0) {
 
        Serial.println("Stop");
        radio = 0;         //1 means play radio in loop
-       pot_check_delay = 0;
+       pot_check_delay = pot_check_delay_loop;
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[0]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+       trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)
+       return;
   }
 
-  if (current_pot_position == 1) {
-      radio = 1;    //make 1 in case r in pressed
-      pot_check_delay = pot_check_delay_radio;
-      musicPlayer.stopPlaying();      
+  if ((trigger == 0 && current_pot_position == 1) || trigger == 1) {
+      musicPlayer.stopPlaying();
+      radio = 1;    //make 1 if streaming radio playing
+      pot_check_delay = pot_check_delay_radio;    
       
       loop_millis = millis();
       while (millis() - loop_millis < 500){
@@ -336,13 +347,19 @@ if (current_pot_position == 0) {
         yield();
         }
 
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[1]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)
+      return;
       }
 
 
-  if (current_pot_position == 2) {
+  if ((trigger == 0 && current_pot_position == 2) || trigger == 2) {
 
       musicPlayer.stopPlaying();
-      radio = 1;    //make 1 in case r in pressed
+      radio = 1;    //make 1 if streaming radio playing
       pot_check_delay = pot_check_delay_radio;
 
       loop_millis = millis();
@@ -373,13 +390,20 @@ if (current_pot_position == 0) {
       while (millis() - loop_millis < 1000){
         yield();
         }
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[2]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+      
+      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)    
+      return;    
       }
 
-  if (current_pot_position == 3) {
+  if ((trigger == 0 && current_pot_position == 3) || trigger == 3) {
 
-      radio = 1;    //make 1 in case r in pressed
-      pot_check_delay = pot_check_delay_radio;
       musicPlayer.stopPlaying();
+      radio = 1;    //make 1 if streaming radio playing
+      pot_check_delay = pot_check_delay_radio;
       
       loop_millis = millis();
       while (millis() - loop_millis < 500){
@@ -409,12 +433,24 @@ if (current_pot_position == 0) {
         while (millis() - loop_millis < 1000){
           yield();
           }
+      
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[3]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+      return;       
       }
 
-  if (current_pot_position == 4) {
+  if ((trigger == 0 && current_pot_position == 4) || trigger == 4) {
       radio = 0;         //1 means play radio in loop
-      pot_check_delay = 0;
+      pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying();          
+
+      loop_millis = millis();
+      while (millis() - loop_millis < 500){
+        yield();
+        }
 
       Serial.println(F("Playing track 1"));
       musicPlayer.startPlayingFile("/1.mp3");
@@ -423,11 +459,18 @@ if (current_pot_position == 0) {
       while (millis() - loop_millis < 1000){
         yield();
         }
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[4]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    return;     
     }
 
-  if (current_pot_position == 5) {
+  if ((trigger == 0 && current_pot_position == 5) || trigger == 5) {
       radio = 0;         //1 means play radio in loop
-      pot_check_delay = 0;
+      pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying();          
       
       loop_millis = millis();
@@ -442,11 +485,18 @@ if (current_pot_position == 0) {
       while (millis() - loop_millis < 1000){
         yield();
         }
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[5]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)    
+    return;    
     }
 
-  if (current_pot_position == 6) {
+  if ((trigger == 0 && current_pot_position == 6) || trigger == 6) {
       radio = 0;         //1 means play radio in loop
-      pot_check_delay = 0;
+      pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying(); 
 
       loop_millis = millis();
@@ -461,11 +511,18 @@ if (current_pot_position == 0) {
       while (millis() - loop_millis < 1000){
         yield();
         }
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[6]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)     
+    return;      
     }  
 
-  if (current_pot_position == 7) {
+  if ((trigger == 0 && current_pot_position == 7) || trigger == 7) {
       radio = 0;         //1 means play radio in loop
-      pot_check_delay = 0;
+      pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying(); 
 
       loop_millis = millis();
@@ -480,11 +537,18 @@ if (current_pot_position == 0) {
       while (millis() - loop_millis < 1000){
         yield();
         }
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[7]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    return;        
     }  
 
-  if (current_pot_position == 8) {
+  if ((trigger == 0 && current_pot_position == 8) || trigger == 8) {
       radio = 0;         //1 means play radio in loop
-      pot_check_delay = 0;
+      pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying(); 
 
       loop_millis = millis();
@@ -499,6 +563,13 @@ if (current_pot_position == 0) {
       while (millis() - loop_millis < 1000){
         yield();
         }
+
+      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+      fill_solid(&(leds[8]), 1 /*number of leds*/, CRGB(red, green, blue));
+      FastLED.show();
+
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value) 
+    return;          
     }  
 
 }
@@ -599,7 +670,7 @@ void check_pot_position(){
       
       current_pot_position = new_pot_position;
       current_pot_position_millis = millis();  
-      pot_check_delay = 0;
+      pot_check_delay = pot_check_delay_loop;
       radio = 0;   //It's moved, stop streaming
 
       }
@@ -637,3 +708,74 @@ void check_pot_position(){
 }
 
 
+void Blynk_check(){
+  if (blynk_vol != vol){
+  vol = blynk_vol;
+  musicPlayer.setVolume(50 - vol, 50 - vol);   // Set volume for left, right channels. lower numbers == louder volume!
+  //Serial.println(vol);
+  //Serial.println(blynk_vol);
+  }
+
+ if (pause != blynk_pause) {
+
+      if (! musicPlayer.paused()) {
+        musicPlayer.pausePlaying(true);
+      } else { 
+        musicPlayer.pausePlaying(false);
+      }
+  pause = blynk_pause;
+  }
+
+if (menu != blynk_menu){
+menu = blynk_menu;
+
+switch (blynk_menu)
+  {
+    case 1: { // Item 1
+      Serial.println("Stop");
+      trigger = 100;
+      break;
+    }
+    case 2: { // Item 2
+      Serial.println("Radio NZ");
+      trigger = 1;
+      break;
+    }
+    case 3: { // Item 3
+      Serial.println("WUNC");
+      trigger = 2;      
+      break;
+    }
+    case 4: { // Item 4
+      Serial.println("BBC World service");
+      trigger = 3;      
+      break;
+    }    
+    case 5: { // Item 5
+      Serial.println("MP3_1");
+      trigger = 4;      
+      break;
+    }    
+    case 6: { // Item 6
+      Serial.println("MP3_2");
+      trigger = 5;      
+      break;
+    }  
+    case 7: { // Item 7
+      Serial.println("MP3_3");
+      trigger = 6;      
+      break;
+    }  
+    case 8: { // Item 8
+      Serial.println("MP3_4");
+      trigger = 7;      
+      break;
+    }
+    case 9: { // Item 9
+      Serial.println("MP3_5");
+      trigger = 8;
+      break;
+    }                 
+  }
+}
+}

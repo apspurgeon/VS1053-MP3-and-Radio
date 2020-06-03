@@ -73,6 +73,10 @@ int current_pot_position = 1000;  //currently held position to compare to a newl
 unsigned long  current_pot_position_millis;  //millis for position
 unsigned long  threshold = 1000;          //How long to be in the position before changing tracks
 unsigned long  loop_millis;    //for delays
+unsigned long  pause_millis;    //for delays
+unsigned long  pause_delay = 750;    //for delays
+int pause_flip = 0;    //for delays
+
 long pot_check_millis;    //used for pot check delay
 const int analogInPin = A0;  // ESP8266 Analog Pin ADC0 = A0
 int new_sensorValue = 0;         // value read from the pot
@@ -84,6 +88,7 @@ int blynk_pause = 0;
 int blynk_menu = 0;
 int menu = 0;
 int trigger = 0;    //Used to trigger playing of stream/mp3s with Blynk.  -1 = No trigger from Blynk
+int stopped = 0;    //1 when stopped and used to avoid blinking LED when paused
 
 //LED details 
 #define NUM_LEDS_PER_STRIP 9  //Number of LEDs per strip  (count from 0)
@@ -169,6 +174,7 @@ BLYNK_WRITE(V0) // Widget WRITEs to Virtual Pin
 BLYNK_WRITE(V1) // Widget WRITEs to Virtual Pin
 {
   blynk_pause = param.asInt(); // getting first value
+    pause_millis = millis();
 }
 
 BLYNK_WRITE(V2) // Widget WRITEs to Virtual Pin
@@ -287,12 +293,31 @@ pot_check_millis = millis();
 if (radio == 1 && pause == 0) {
   continue_stream();
 }
+ 
+if (pause == 1 && stopped == 0){
+   
+    if (millis() - pause_millis > pause_delay){
+      FastLED.setBrightness(brightness * pause_flip);
+      FastLED.show();
+
+      if (pause_flip == 1){
+        pause_flip = 0;
+      }
+      else
+      {
+        pause_flip =1;
+      }
+      pause_millis = millis();
+    }
+      }
+            
   //display_values();  
 }
 
 
 //Play music based on pot_position
 void play_music() {
+
 if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       musicPlayer.stopPlaying();
       
@@ -310,6 +335,8 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       FastLED.show();
 
        trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)
+       stopped = 1;
+
        return;
   }
 
@@ -352,6 +379,8 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       FastLED.show();
 
       trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)
+      stopped = 0;
+
       return;
       }
 
@@ -395,7 +424,9 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       fill_solid(&(leds[2]), 1 /*number of leds*/, CRGB(red, green, blue));
       FastLED.show();
       
-      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)    
+      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value) 
+      stopped = 0;   
+
       return;    
       }
 
@@ -439,6 +470,8 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       FastLED.show();
 
       trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+      stopped = 0;
+
       return;       
       }
 
@@ -465,6 +498,8 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       FastLED.show();
 
     trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    stopped = 0;
+
     return;     
     }
 
@@ -490,7 +525,9 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       fill_solid(&(leds[5]), 1 /*number of leds*/, CRGB(red, green, blue));
       FastLED.show();
 
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)    
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    stopped = 0;
+
     return;    
     }
 
@@ -516,7 +553,9 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       fill_solid(&(leds[6]), 1 /*number of leds*/, CRGB(red, green, blue));
       FastLED.show();
 
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)     
+    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    stopped = 0;
+
     return;      
     }  
 
@@ -543,6 +582,8 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       FastLED.show();
 
     trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    stopped = 0;
+
     return;        
     }  
 
@@ -569,6 +610,8 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       FastLED.show();
 
     trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value) 
+    stopped = 0;
+
     return;          
     }  
 
@@ -720,8 +763,12 @@ void Blynk_check(){
 
       if (! musicPlayer.paused()) {
         musicPlayer.pausePlaying(true);
+              FastLED.setBrightness(brightness);
+              FastLED.show();
       } else { 
         musicPlayer.pausePlaying(false);
+              FastLED.setBrightness(brightness);
+              FastLED.show();
       }
   pause = blynk_pause;
   }

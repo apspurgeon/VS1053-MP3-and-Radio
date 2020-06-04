@@ -25,6 +25,7 @@
 // Specifically for use with the Adafruit Feather, the pins are pre-set here!
 
 // include SPI, MP3 and SD libraries
+
 #include <SPI.h>
 #include <SD.h>
 #include <Adafruit_VS1053.h>
@@ -35,6 +36,7 @@
 #define str(s) #s
 #define BLYNK_PRINT Serial
 #define DBLYNKCERT_NAME "H3reyRYu6lEjFVRLbgwMF9JwLVMd8Lff"
+
 
 const char auth[] = xstr(BLYNKCERT_NAME); // your BLYNK Cert from build flags
 WiFiClient client;
@@ -58,37 +60,50 @@ const char *host3 = "bbcwssc.ic.llnwd.net";
 const char *path3 = "/stream/bbcwssc_mp1_ws-eieuk";
 int httpPort3 = 80;
 
-//Volume
+char mp3_file[][10] = // 10 is the length of the longest string + 1 ( for the '\0' at the end )
+{
+	"/1.mp3",
+	"/2.mp3",
+	"/3.mp3",
+  "/4.mp3",
+  "/5.mp3"
+};
+
+
+//Volume (0=Loudest 50=Quietest).  Flipped in the code so slider in Blynk is low to high (left to right)
 int vol = 0;
 int blynk_vol = vol;
 
-//Breaks
 const int pot_array_size = 10;
-int pot_array_shim = 5;       //buffer between array values to stop shuttering between positions
-//int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 250, 500, 720, 880, 1000, 1024 + pot_array_shim + 1};  //1024 exceeded due to shim value
+int pot_array_shim = 5;           //buffer between array values to stop shuttering between positions
 int pot_array[pot_array_size] = {0 - pot_array_shim - 1, 20, 175, 300, 520, 680, 800, 900, 1000, 1024 + pot_array_shim + 1};  //1024 exceeded due to shim value
-int pot_array_count = 0;      //counter to cycle through array
-int new_pot_position = 0;      //For newly found position
-int current_pot_position = 1000;  //currently held position to compare to a newly found position.   Start with 1000 so a new position will be found in the comparision with new position
-unsigned long  current_pot_position_millis;  //millis for position
-unsigned long  threshold = 1000;          //How long to be in the position before changing tracks
-unsigned long  loop_millis;    //for delays
-unsigned long  pause_millis;    //for delays
-unsigned long  pause_delay = 750;    //for delays
-int pause_flip = 0;    //for delays
+int pot_array_count = 0;          //counter to cycle through array
+int new_pot_position = 0;         //For newly found position
+int current_pot_position = 1000;  //Currently held position to compare to a newly found position.   Start with 1000 so a new position will be found in the comparision with new position
 
-long pot_check_millis;    //used for pot check delay
-const int analogInPin = A0;  // ESP8266 Analog Pin ADC0 = A0
-int new_sensorValue = 0;         // value read from the pot
+unsigned long  current_pot_position_millis;  //millis for position
+unsigned long  threshold = 1000;             //How long to be in the position before changing tracks
+unsigned long  loop_millis;                  //for needed delays instead of delay()
+
+long pot_check_millis;                        //used for pot check delay
 unsigned long  pot_check_delay;
-unsigned long  pot_check_delay_loop = 50;      //Blynk fails if 0, How long between checking pot, if radio is streaming it needs be be high otherwise faster in a loop
-unsigned long  pot_check_delay_radio = 800;      //How long between checking pot, if radio is streaming it needs be be high
-int pause = 0;
-int blynk_pause = 0;
-int blynk_menu = 0;
-int menu = 0;
-int trigger = 0;    //Used to trigger playing of stream/mp3s with Blynk.  -1 = No trigger from Blynk
-int stopped = 0;    //1 when stopped and used to avoid blinking LED when paused
+unsigned long  pot_check_delay_loop = 50;     //Blynk fails if 0, How long between checking pot, if radio is streaming it needs be be high otherwise faster in a loop
+unsigned long  pot_check_delay_radio = 800;   //How long between checking pot, if radio is streaming it needs be be high
+
+unsigned long  pause_millis;                 //for Pause LED on/off count
+unsigned long  pause_delay = 750;            //How long for LED on/off cycle during pause
+int pause = 0;                               //current pause 0=no pause, 1=paused
+int blynk_pause = 0;                         //pause from blynk to compare against current pause
+int pause_flip = 0;                          //for pause LED on/off flips
+
+const int analogInPin = A0;       //ESP8266 Analog Pin ADC0 = A0 for the Pot
+int new_sensorValue = 0;         // value read from the pot
+
+int menu = 0;             //current menu position
+int blynk_menu = 0;       //Blynk menu position, compare to current menu position
+int trigger = 0;          //Used to trigger playing of stream/mp3s with Blynk.  0 = No trigger from Blynk
+int stopped = 0;          //1 when stopped and used to avoid blinking LED when paused pressed
+int to_play;              //Which mp3 to play
 
 //LED details 
 #define NUM_LEDS_PER_STRIP 9  //Number of LEDs per strip  (count from 0)
@@ -100,14 +115,11 @@ int green = 255;
 int blue = 255;
 int red = 255;
 
-int LED_count = 0;          //For the loop
-
 struct CRGB leds[NUM_LEDS_PER_STRIP]; //initiate FastLED with number of LEDs
 
 // our little buffer of mp3 data
 uint8_t mp3buff[32];   // vs1053 likes 32 bytes at a time
 int radio = 0;         //1 means play radio in loop
-//int loopcounter = 0;
 
 // These are the pins used
 #define VS1053_RESET   -1     // VS1053 reset pin (not used!)
@@ -155,9 +167,28 @@ int radio = 0;         //1 means play radio in loop
 
 #endif
 
-
 Adafruit_VS1053_FilePlayer musicPlayer = 
   Adafruit_VS1053_FilePlayer(VS1053_RESET, VS1053_CS, VS1053_DCS, VS1053_DREQ, CARDCS);
+
+
+//Volume from Blynk
+BLYNK_WRITE(V0) // Widget WRITEs to Virtual Pin
+{
+  blynk_vol = param.asInt(); // getting first value
+}
+
+//Puase from Blynk
+BLYNK_WRITE(V1) // Widget WRITEs to Virtual Pin
+{
+  blynk_pause = param.asInt(); // getting first value
+    pause_millis = millis();
+}
+
+//Menu from Blynk
+BLYNK_WRITE(V2) // Widget WRITEs to Virtual Pin
+{
+  blynk_menu = param.asInt(); // getting first value  
+}
 
 void printDirectory(File dir, int numTabs);
 void check_pot_position();
@@ -165,22 +196,6 @@ void display_values();
 void play_music();
 void continue_stream();
 void Blynk_check();
-
-BLYNK_WRITE(V0) // Widget WRITEs to Virtual Pin
-{
-  blynk_vol = param.asInt(); // getting first value
-}
-
-BLYNK_WRITE(V1) // Widget WRITEs to Virtual Pin
-{
-  blynk_pause = param.asInt(); // getting first value
-    pause_millis = millis();
-}
-
-BLYNK_WRITE(V2) // Widget WRITEs to Virtual Pin
-{
-  blynk_menu = param.asInt(); // getting first value  
-}
 
 
 void setup() {
@@ -350,7 +365,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      Serial.println("Radio 1 on");
+      Serial.println("Radio 1");
 
         /************************* INITIALIZE STREAM */
         Serial.print("connecting to ");  Serial.println(host);
@@ -396,7 +411,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      Serial.println("Radio 2 on");
+      Serial.println("Radio 2");
 
         /************************* INITIALIZE STREAM */
         Serial.print("connecting to ");  Serial.println(host2);
@@ -441,7 +456,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      Serial.println("Radio 3 on");
+      Serial.println("Radio 3");
 
         /************************* INITIALIZE STREAM */
         Serial.print("connecting to ");  Serial.println(host3);
@@ -475,8 +490,19 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       return;       
       }
 
-  if ((trigger == 0 && current_pot_position == 4) || trigger == 4) {
-      radio = 0;         //1 means play radio in loop
+
+  //For selections greater than the 3 radio stations.
+  if (trigger > 3 || current_pot_position > 3){
+    if (trigger == 0 && current_pot_position > 3)  {   //Not a Blynk trigger and more than the 3 radio stations
+      to_play = current_pot_position;   //should be 1-5
+      }
+      else
+      {
+      to_play = trigger;
+      }
+
+  if ((trigger == 0 && current_pot_position == to_play) || trigger == to_play) {
+      radio = 0;         //1 means play radio in loop, 0 means an SD Card MP3 (don't stream)
       pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying();          
 
@@ -485,8 +511,9 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      Serial.println(F("Playing track 1"));
-      musicPlayer.startPlayingFile("/1.mp3");
+      //musicPlayer.startPlayingFile("/1.mp3");
+
+      musicPlayer.startPlayingFile(mp3_file[to_play -4]);
 
       loop_millis = millis();
       while (millis() - loop_millis < 1000){
@@ -494,7 +521,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         }
 
       fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[4]), 1 /*number of leds*/, CRGB(red, green, blue));
+      fill_solid(&(leds[to_play]), 1 /*number of leds*/, CRGB(red, green, blue));
       FastLED.show();
 
     trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
@@ -502,118 +529,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
 
     return;     
     }
-
-  if ((trigger == 0 && current_pot_position == 5) || trigger == 5) {
-      radio = 0;         //1 means play radio in loop
-      pot_check_delay = pot_check_delay_loop;
-      musicPlayer.stopPlaying();          
-      
-      loop_millis = millis();
-      while (millis() - loop_millis < 500){
-        yield();
-        }
-
-      Serial.println(F("Playing track 2"));
-      musicPlayer.startPlayingFile("/2.mp3");
-      
-      loop_millis = millis();
-      while (millis() - loop_millis < 1000){
-        yield();
-        }
-
-      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[5]), 1 /*number of leds*/, CRGB(red, green, blue));
-      FastLED.show();
-
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
-    stopped = 0;
-
-    return;    
-    }
-
-  if ((trigger == 0 && current_pot_position == 6) || trigger == 6) {
-      radio = 0;         //1 means play radio in loop
-      pot_check_delay = pot_check_delay_loop;
-      musicPlayer.stopPlaying(); 
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 500){
-        yield();
-        }
-
-      Serial.println(F("Playing track 3"));
-      musicPlayer.startPlayingFile("/3.mp3");
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 1000){
-        yield();
-        }
-
-      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[6]), 1 /*number of leds*/, CRGB(red, green, blue));
-      FastLED.show();
-
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
-    stopped = 0;
-
-    return;      
-    }  
-
-  if ((trigger == 0 && current_pot_position == 7) || trigger == 7) {
-      radio = 0;         //1 means play radio in loop
-      pot_check_delay = pot_check_delay_loop;
-      musicPlayer.stopPlaying(); 
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 500){
-        yield();
-        }
-
-      Serial.println(F("Playing track 4"));
-      musicPlayer.startPlayingFile("/4.mp3");
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 1000){
-        yield();
-        }
-
-      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[7]), 1 /*number of leds*/, CRGB(red, green, blue));
-      FastLED.show();
-
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
-    stopped = 0;
-
-    return;        
-    }  
-
-  if ((trigger == 0 && current_pot_position == 8) || trigger == 8) {
-      radio = 0;         //1 means play radio in loop
-      pot_check_delay = pot_check_delay_loop;
-      musicPlayer.stopPlaying(); 
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 500){
-        yield();
-        }
-
-      Serial.println(F("Playing track 5"));
-      musicPlayer.startPlayingFile("/5.mp3");
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 1000){
-        yield();
-        }
-
-      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[8]), 1 /*number of leds*/, CRGB(red, green, blue));
-      FastLED.show();
-
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value) 
-    stopped = 0;
-
-    return;          
-    }  
+}
 
 }
 
@@ -662,33 +578,25 @@ void display_values(){
 }
 
 void continue_stream(){
-          //Serial.print(".");  
-        //yield();
+
         // wait till mp3 wants more data
         if (musicPlayer.readyForData()) {
-          //Serial.print("ready ");
-
           //wants more data! check we have something available from the stream
           if (client.available() > 0) {
-            //yield();
-            //Serial.print("set ");
-            // yea! read up to 32 bytes
+            //read up to 32 bytes
             uint8_t bytesread = client.read(mp3buff, 32);
             // push to mp3
             musicPlayer.playData(mp3buff, bytesread);
-      
-            //Serial.println("stream!");
           }
         }
 }
 
 void check_pot_position(){
 
-  //old_sensorValue = new_sensorValue;
   new_sensorValue = analogRead(analogInPin);
 
   //Figure out position based on Pot_array[]
-  pot_array_count = 0;   //counter to cycle through array
+  pot_array_count = 0;     //counter to cycle through array
   new_pot_position = -1;   //-1 means nothing found by default (e.g not a valid position)
 
   while (new_pot_position == -1){
@@ -714,7 +622,7 @@ void check_pot_position(){
       current_pot_position = new_pot_position;
       current_pot_position_millis = millis();  
       pot_check_delay = pot_check_delay_loop;
-      radio = 0;   //It's moved, stop streaming
+      radio = 0;      //It's moved, stop streaming
 
       }
     
@@ -755,8 +663,6 @@ void Blynk_check(){
   if (blynk_vol != vol){
   vol = blynk_vol;
   musicPlayer.setVolume(50 - vol, 50 - vol);   // Set volume for left, right channels. lower numbers == louder volume!
-  //Serial.println(vol);
-  //Serial.println(blynk_vol);
   }
 
  if (pause != blynk_pause) {
@@ -799,27 +705,27 @@ switch (blynk_menu)
       break;
     }    
     case 5: { // Item 5
-      Serial.println("MP3_1");
+      Serial.println("MP3 Track 1");
       trigger = 4;      
       break;
     }    
     case 6: { // Item 6
-      Serial.println("MP3_2");
+      Serial.println("MP3 Track 2");
       trigger = 5;      
       break;
     }  
     case 7: { // Item 7
-      Serial.println("MP3_3");
+      Serial.println("MP3 Track 3");
       trigger = 6;      
       break;
     }  
     case 8: { // Item 8
-      Serial.println("MP3_4");
+      Serial.println("MP3 Track 4");
       trigger = 7;      
       break;
     }
     case 9: { // Item 9
-      Serial.println("MP3_5");
+      Serial.println("MP3 Track5");
       trigger = 8;
       break;
     }                 

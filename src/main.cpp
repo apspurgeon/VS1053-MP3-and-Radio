@@ -521,7 +521,32 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         }
 
       fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
+
+      //If more than 9 LEDs change the colour to show "looping around".  Only works with Blynk
+      //Yellow when looped
+      if (to_play >8){
+        red = 255;
+        blue = 0;
+        green = 255;
+      }
+      else
+      {
+        //White if no loop
+        red = 255;
+        blue = 255;
+        green = 255;
+      }
+
+
+      //If more than the 9 LEDs loop around.  Only works with Blynk
+      if (to_play > 8){
+      fill_solid(&(leds[to_play-9]), 1 /*number of leds*/, CRGB(red, green, blue));
+      }
+      else
+      {      
       fill_solid(&(leds[to_play]), 1 /*number of leds*/, CRGB(red, green, blue));
+      }
+
       FastLED.show();
 
     trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
@@ -682,53 +707,30 @@ void Blynk_check(){
 if (menu != blynk_menu){
 menu = blynk_menu;
 
-switch (blynk_menu)
-  {
-    case 1: { // Item 1
-      Serial.println("Stop");
+if (blynk_menu == 1){
+        Serial.println("Stop");
       trigger = 100;
-      break;
-    }
-    case 2: { // Item 2
+}
+
+if (blynk_menu == 2){
       Serial.println("Radio NZ");
       trigger = 1;
-      break;
-    }
-    case 3: { // Item 3
+}
+
+if (blynk_menu == 3){
       Serial.println("WUNC");
       trigger = 2;      
-      break;
-    }
-    case 4: { // Item 4
+}
+
+if (blynk_menu == 4){
       Serial.println("BBC World service");
       trigger = 3;      
-      break;
-    }    
-    case 5: { // Item 5
-      Serial.println("MP3 Track 1");
-      trigger = 4;      
-      break;
-    }    
-    case 6: { // Item 6
-      Serial.println("MP3 Track 2");
-      trigger = 5;      
-      break;
-    }  
-    case 7: { // Item 7
-      Serial.println("MP3 Track 3");
-      trigger = 6;      
-      break;
-    }  
-    case 8: { // Item 8
-      Serial.println("MP3 Track 4");
-      trigger = 7;      
-      break;
-    }
-    case 9: { // Item 9
-      Serial.println("MP3 Track5");
-      trigger = 8;
-      break;
-    }                 
-  }
+}
+
+if (blynk_menu >4){
+      Serial.print("MP3 Track ");
+      Serial.println(blynk_menu - 4);
+      trigger = blynk_menu -1;      
+}
 }
 }

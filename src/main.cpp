@@ -60,13 +60,17 @@ const char *host3 = "bbcwssc.ic.llnwd.net";
 const char *path3 = "/stream/bbcwssc_mp1_ws-eieuk";
 int httpPort3 = 80;
 
-char mp3_file[][10] = // 10 is the length of the longest string + 1 ( for the '\0' at the end )
+char mp3_file[][70] = // 10 is the length of the longest string + 1 ( for the '\0' at the end )
 {
-	"/1.mp3",
-	"/2.mp3",
-	"/3.mp3",
-  "/4.mp3",
-  "/5.mp3"
+	"/BBC_Radio WWII_1of4.mp3",
+	"/BBC Radio WWII 2of4.mp3",
+	"/BBC Radio WWII 3of4.mp3",
+  "/BBC Radio WWII 4of4.mp3",
+  "/Orson Welles - War Of The Worlds 1938.mp3",
+  "/HM King George VI - War outbreak speech - 1939.mp3",
+  "/Lord Haw Haw - British Invasion Looms 1940.mp3",
+  "/Lord Haw Haw - Germany Calling 1941.mp3",
+  "/Germany Calling William Joyces Last British Broadcast.mp3",
 };
 
 
@@ -109,8 +113,8 @@ int to_play;              //Which mp3 to play
 #define NUM_LEDS_PER_STRIP 9  //Number of LEDs per strip  (count from 0)
 #define PIN_LED 5            //I.O pin on ESP2866 device going to LEDs
 #define COLOR_ORDER GRB       // LED stips aren't all in the same RGB order.  If colours are wrong change this  e.g  RBG > GRB.   :RBG=TARDIS
-#define brightness 32       //How bright are the LEDs
-
+int brightness = 10;       //How bright are the LEDs.  Low is good, WS2812 are noisy at higher brightness
+int blynk_brightness = brightness;
 int green = 255;
 int blue = 255;
 int red = 255;
@@ -188,6 +192,12 @@ BLYNK_WRITE(V1) // Widget WRITEs to Virtual Pin
 BLYNK_WRITE(V2) // Widget WRITEs to Virtual Pin
 {
   blynk_menu = param.asInt(); // getting first value  
+}
+
+//LED Brightness from Blynk
+BLYNK_WRITE(V3) // Widget WRITEs to Virtual Pin
+{
+  blynk_brightness = param.asInt(); // getting first value  
 }
 
 void printDirectory(File dir, int numTabs);
@@ -332,6 +342,10 @@ if (pause == 1 && stopped == 0){
 
 //Play music based on pot_position
 void play_music() {
+
+red = 255;
+blue = 255;
+green = 255;
 
 if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       musicPlayer.stopPlaying();
@@ -511,8 +525,6 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      //musicPlayer.startPlayingFile("/1.mp3");
-
       musicPlayer.startPlayingFile(mp3_file[to_play -4]);
 
       loop_millis = millis();
@@ -529,14 +541,6 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         blue = 0;
         green = 255;
       }
-      else
-      {
-        //White if no loop
-        red = 255;
-        blue = 255;
-        green = 255;
-      }
-
 
       //If more than the 9 LEDs loop around.  Only works with Blynk
       if (to_play > 8){
@@ -689,6 +693,14 @@ void Blynk_check(){
   vol = blynk_vol;
   musicPlayer.setVolume(50 - vol, 50 - vol);   // Set volume for left, right channels. lower numbers == louder volume!
   }
+
+
+if (blynk_brightness != brightness){
+  brightness = blynk_brightness;
+    FastLED.setBrightness(brightness);
+    FastLED.show();
+}
+
 
  if (pause != blynk_pause) {
 

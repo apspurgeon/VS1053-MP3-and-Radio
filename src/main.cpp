@@ -45,24 +45,33 @@ WiFiClient client;
 const char ssid[] = xstr(SSID_NAME);          //  your network SSID (name)
 const char password[] = xstr(PASSWORD_NAME);      // your network password
 
-//RNZ (r)
-const char *host = "radionz-ice.streamguys.com";
-const char *path = "/national.mp3";
-int httpPort = 80;
+int NumberofRadiostations = 3;
 
-//WUNC World service (w)
-const char *host2 = "edg-iad-wunc-ice.streamguys1.com";
-const char *path2 = "/wunc-64-aac";
-int httpPort2 = 80;
+const char host[][40] = 
+{
+  "radionz-ice.streamguys.com",   //Radio staion 1
+  "edg-iad-wunc-ice.streamguys1.com",   //Radio staion 2
+  "bbcwssc.ic.llnwd.net"   //Radio staion 3
+};
 
-//BBC World service (b)
-const char *host3 = "bbcwssc.ic.llnwd.net";
-const char *path3 = "/stream/bbcwssc_mp1_ws-eieuk";
-int httpPort3 = 80;
+const char path[][30] = 
+{
+  "/national.mp3",   //Radio staion 1
+  "/wunc-64-aac",   //Radio staion 2
+  "/stream/bbcwssc_mp1_ws-eieuk"   //Radio staion 3
+};
+
+const char httpPort[][5] = 
+{
+  "80",   //Radio staion 1
+  "80",   //Radio staion 2
+  "80"   //Radio staion 3
+};
+
 
 char mp3_file[][70] = // 10 is the length of the longest string + 1 ( for the '\0' at the end )
 {
-	"/BBC_Radio WWII_1of4.mp3",
+	"/BBC Radio WWII 1of4.mp3",
 	"/BBC Radio WWII 2of4.mp3",
 	"/BBC Radio WWII 3of4.mp3",
   "/BBC Radio WWII 4of4.mp3",
@@ -105,7 +114,7 @@ int new_sensorValue = 0;         // value read from the pot
 
 int menu = 0;             //current menu position
 int blynk_menu = 0;       //Blynk menu position, compare to current menu position
-int trigger = 0;          //Used to trigger playing of stream/mp3s with Blynk.  0 = No trigger from Blynk
+int Blynk_trigger = 0;          //Used to Blynk_trigger playing of stream/mp3s with Blynk.  0 = No Blynk_trigger from Blynk
 int stopped = 0;          //1 when stopped and used to avoid blinking LED when paused pressed
 int to_play;              //Which mp3 to play
 
@@ -115,6 +124,8 @@ int to_play;              //Which mp3 to play
 #define COLOR_ORDER GRB       // LED stips aren't all in the same RGB order.  If colours are wrong change this  e.g  RBG > GRB.   :RBG=TARDIS
 int brightness = 10;       //How bright are the LEDs.  Low is good, WS2812 are noisy at higher brightness
 int blynk_brightness = brightness;
+
+//White
 int green = 255;
 int blue = 255;
 int red = 255;
@@ -298,9 +309,9 @@ Blynk.run();
 
 Blynk_check();
 
-if (trigger > 0){
+if (Blynk_trigger > 0){
 
-  Serial.println("Blynk trigger");
+  Serial.println("Blynk_trigger");
   play_music();
 }
 
@@ -347,7 +358,8 @@ red = 255;
 blue = 255;
 green = 255;
 
-if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
+//Check iseither the Blynk_trigger (100) or current pot position (0) are saying STOP
+if ((Blynk_trigger == 0 && current_pot_position == 0) || Blynk_trigger == 100) {
       musicPlayer.stopPlaying();
       
       loop_millis = millis();
@@ -363,13 +375,29 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
       fill_solid(&(leds[0]), 1 /*number of leds*/, CRGB(red, green, blue));
       FastLED.show();
 
-       trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)
+       Blynk_trigger = 0;   //Reset Blynk_trigger so only fires this code once (like a change in pot value)
        stopped = 1;
 
        return;
   }
 
-  if ((trigger == 0 && current_pot_position == 1) || trigger == 1) {
+  //Greater than 0 (stop) and less or equal to the number of radio stations (3)
+  if ((Blynk_trigger == 0 && (current_pot_position > 0 && current_pot_position <= NumberofRadiostations)) || (Blynk_trigger > 0 && Blynk_trigger <= NumberofRadiostations)) {
+
+  //I need to play something (condition above passed), work out what
+  if ((Blynk_trigger > 0 && Blynk_trigger <=NumberofRadiostations) || (current_pot_position > 0 && current_pot_position <= NumberofRadiostations)){
+    if (Blynk_trigger == 0 && current_pot_position <= NumberofRadiostations)  {   //Not a Blynk Blynk_trigger and within the 3 radio stations
+      to_play = current_pot_position -1;   //should be 1-3, and from the pot
+      }
+      else
+      {
+      to_play = Blynk_trigger -1;
+      }
+
+      //convert the httpPort array into an int
+      String httpPort_use_String = httpPort[to_play];
+      int httpPort_use = httpPort_use_String.toInt();
+ 
       musicPlayer.stopPlaying();
       radio = 1;    //make 1 if streaming radio playing
       pot_check_delay = pot_check_delay_radio;    
@@ -379,23 +407,23 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      Serial.println("Radio 1");
+      Serial.println("Radio station");
 
         /************************* INITIALIZE STREAM */
-        Serial.print("connecting to ");  Serial.println(host);
+        Serial.print("connecting to ");  Serial.println(host[to_play]);
         
-        if (!client.connect(host, httpPort)) {
+        if (!client.connect(host[to_play], httpPort_use)) {
           Serial.println("Connection failed");
           return;
         }
 
         // We now create a URI for the request
         Serial.print("Requesting URL: ");
-        Serial.println(path);
+        Serial.println(path[to_play]);
         
         // This will send the request to the server
-        client.print(String("GET ") + path + " HTTP/1.1\r\n" +
-                    "Host: " + host + "\r\n" + 
+        client.print(String("GET ") + path[to_play] + " HTTP/1.1\r\n" +
+                    "Host: " + host[to_play] + "\r\n" + 
                     "Connection: close\r\n\r\n");
 
       loop_millis = millis();
@@ -404,118 +432,32 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         }
 
       fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[1]), 1 /*number of leds*/, CRGB(red, green, blue));
+      fill_solid(&(leds[to_play + 1]), 1 /*number of leds*/, CRGB(red, green, blue));
       FastLED.show();
 
-      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)
+      Blynk_trigger = 0;   //Reset Blynk_trigger so only fires this code once (like a change in pot value)
       stopped = 0;
 
       return;
       }
+  }
 
 
-  if ((trigger == 0 && current_pot_position == 2) || trigger == 2) {
-
-      musicPlayer.stopPlaying();
-      radio = 1;    //make 1 if streaming radio playing
-      pot_check_delay = pot_check_delay_radio;
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 500){
-        yield();
-        }
-
-      Serial.println("Radio 2");
-
-        /************************* INITIALIZE STREAM */
-        Serial.print("connecting to ");  Serial.println(host2);
-        
-        if (!client.connect(host2, httpPort2)) {
-          Serial.println("Connection failed");
-          return;
-        }
-
-        // We now create a URI for the request
-        Serial.print("Requesting URL: ");
-        Serial.println(path2);
-        
-        // This will send the request to the server
-        client.print(String("GET ") + path2 + " HTTP/1.1\r\n" +
-                    "Host: " + host2 + "\r\n" + 
-                    "Connection: close\r\n\r\n");
-
-      loop_millis = millis();
-      while (millis() - loop_millis < 1000){
-        yield();
-        }
-
-      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[2]), 1 /*number of leds*/, CRGB(red, green, blue));
-      FastLED.show();
-      
-      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value) 
-      stopped = 0;   
-
-      return;    
-      }
-
-  if ((trigger == 0 && current_pot_position == 3) || trigger == 3) {
-
-      musicPlayer.stopPlaying();
-      radio = 1;    //make 1 if streaming radio playing
-      pot_check_delay = pot_check_delay_radio;
-      
-      loop_millis = millis();
-      while (millis() - loop_millis < 500){
-        yield();
-        }
-
-      Serial.println("Radio 3");
-
-        /************************* INITIALIZE STREAM */
-        Serial.print("connecting to ");  Serial.println(host3);
-        
-        if (!client.connect(host3, httpPort3)) {
-          Serial.println("Connection failed");
-          return;
-        }
-
-        // We now create a URI for the request
-        Serial.print("Requesting URL: ");
-        Serial.println(path3);
-        
-        // This will send the request to the server
-        client.print(String("GET ") + path3 + " HTTP/1.1\r\n" +
-                    "Host: " + host3 + "\r\n" + 
-                    "Connection: close\r\n\r\n");
-
-        loop_millis = millis();
-        while (millis() - loop_millis < 1000){
-          yield();
-          }
-      
-      fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
-      fill_solid(&(leds[3]), 1 /*number of leds*/, CRGB(red, green, blue));
-      FastLED.show();
-
-      trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
-      stopped = 0;
-
-      return;       
-      }
-
-
-  //For selections greater than the 3 radio stations.
-  if (trigger > 3 || current_pot_position > 3){
-    if (trigger == 0 && current_pot_position > 3)  {   //Not a Blynk trigger and more than the 3 radio stations
-      to_play = current_pot_position;   //should be 1-5
+  //Play MP3 on SD card, selection is greater than the number of radio stations
+  if (Blynk_trigger > NumberofRadiostations || current_pot_position > NumberofRadiostations){
+    if (Blynk_trigger == 0 && current_pot_position > NumberofRadiostations)  {   //Not a Blynk Blynk_trigger and more than the number of radio stations
+      to_play = current_pot_position;
       }
       else
       {
-      to_play = trigger;
+      to_play = Blynk_trigger;
       }
 
-  if ((trigger == 0 && current_pot_position == to_play) || trigger == to_play) {
+  if ((Blynk_trigger == 0 && current_pot_position == to_play) || Blynk_trigger == to_play) {
+
+      Serial.print("Play MP3 - ");
+      Serial.println(mp3_file[to_play -(NumberofRadiostations + 1)]);
+
       radio = 0;         //1 means play radio in loop, 0 means an SD Card MP3 (don't stream)
       pot_check_delay = pot_check_delay_loop;
       musicPlayer.stopPlaying();          
@@ -525,7 +467,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
         yield();
         }
 
-      musicPlayer.startPlayingFile(mp3_file[to_play -4]);
+      musicPlayer.startPlayingFile(mp3_file[to_play -(NumberofRadiostations + 1)]);
 
       loop_millis = millis();
       while (millis() - loop_millis < 1000){
@@ -534,17 +476,17 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
 
       fill_solid(&(leds[0]), NUM_LEDS_PER_STRIP /*number of leds*/, CRGB(0, 0, 0));
 
-      //If more than 9 LEDs change the colour to show "looping around".  Only works with Blynk
+      //If more than the number of LEDs change the colour to show "looping around".  Only works with Blynk
       //Yellow when looped
-      if (to_play >8){
+      if (to_play > NUM_LEDS_PER_STRIP -1){
         red = 255;
         blue = 0;
         green = 255;
       }
 
-      //If more than the 9 LEDs loop around.  Only works with Blynk
-      if (to_play > 8){
-      fill_solid(&(leds[to_play-9]), 1 /*number of leds*/, CRGB(red, green, blue));
+      //If more than the number of LEDs loop around.  Only works with Blynk
+      if (to_play > NUM_LEDS_PER_STRIP -1){
+      fill_solid(&(leds[to_play- NUM_LEDS_PER_STRIP]), 1 /*number of leds*/, CRGB(red, green, blue));
       }
       else
       {      
@@ -553,7 +495,7 @@ if ((trigger == 0 && current_pot_position == 0) || trigger == 100) {
 
       FastLED.show();
 
-    trigger = 0;   //Reset trigger so only fires this code once (like a change in pot value)   
+    Blynk_trigger = 0;   //Reset Blynk_trigger so only fires this code once (like a change in pot value)   
     stopped = 0;
 
     return;     
@@ -721,28 +663,28 @@ menu = blynk_menu;
 
 if (blynk_menu == 1){
         Serial.println("Stop");
-      trigger = 100;
+      Blynk_trigger = 100;
 }
 
 if (blynk_menu == 2){
       Serial.println("Radio NZ");
-      trigger = 1;
+      Blynk_trigger = 1;
 }
 
 if (blynk_menu == 3){
       Serial.println("WUNC");
-      trigger = 2;      
+      Blynk_trigger = 2;      
 }
 
 if (blynk_menu == 4){
       Serial.println("BBC World service");
-      trigger = 3;      
+      Blynk_trigger = 3;      
 }
 
 if (blynk_menu >4){
       Serial.print("MP3 Track ");
       Serial.println(blynk_menu - 4);
-      trigger = blynk_menu -1;      
+      Blynk_trigger = blynk_menu -1;      
 }
 }
 }
